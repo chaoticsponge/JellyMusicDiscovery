@@ -121,6 +121,32 @@
           <span>Save</span>
         </button>
       </form>
+
+      <h2>Import playlist</h2>
+      <form id="PlaylistImportForm">
+        <div class="inputContainer">
+          <label class="inputLabel" for="PlaylistFile">Apple Music text, Spotify CSV, M3U or M3U8</label>
+          <input is="emby-input" type="file" id="PlaylistFile" accept=".txt,.csv,.m3u,.m3u8" required />
+        </div>
+        <div class="selectContainer">
+          <label class="selectLabel" for="PlaylistUser">Owner</label>
+          <select is="emby-select" id="PlaylistUser" required></select>
+        </div>
+        <div class="inputContainer">
+          <label class="inputLabel" for="PlaylistName">Playlist name</label>
+          <input is="emby-input" type="text" id="PlaylistName" maxlength="120" placeholder="Defaults to the uploaded filename" />
+        </div>
+        <div class="checkboxContainer">
+          <label>
+            <input is="emby-checkbox" type="checkbox" id="RequestMissingAlbums" checked />
+            <span>Request full albums for unmatched tracks</span>
+          </label>
+        </div>
+        <button is="emby-button" type="button" id="PreviewPlaylist" class="raised"><span>Preview</span></button>
+        <button is="emby-button" type="submit" class="raised button-submit"><span>Import</span></button>
+        <button is="emby-button" type="button" id="ReconcilePlaylists" class="raised"><span>Reconcile saved imports</span></button>
+      </form>
+      <pre id="PlaylistImportResult" style="white-space:pre-wrap"></pre>
     </div>
   </div>
 
@@ -163,9 +189,37 @@
     return cfg;
   }
 
+  function request(path, options) {
+    return ApiClient.ajax(Object.assign({ url: ApiClient.getUrl(path), dataType: 'json' }, options));
+  }
+
+  function showImportResult(value) {
+    page.querySelector('#PlaylistImportResult').textContent = typeof value === 'string'
+      ? value : JSON.stringify(value, null, 2);
+  }
+
+  function playlistForm(includeSettings) {
+    const file = page.querySelector('#PlaylistFile').files[0];
+    if (!file) throw new Error('Choose a playlist file first.');
+    const data = new FormData();
+    data.append('file', file, file.name);
+    if (includeSettings) {
+      data.append('userId', page.querySelector('#PlaylistUser').value);
+      data.append('playlistName', page.querySelector('#PlaylistName').value);
+      data.append('requestMissingAlbums', page.querySelector('#RequestMissingAlbums').checked);
+    }
+    return data;
+  }
+
   page.addEventListener('pageshow', function () {
     Dashboard.showLoadingMsg();
-    ApiClient.getPluginConfiguration(PluginId).then(load).finally(Dashboard.hideLoadingMsg);
+    Promise.all([
+      ApiClient.getPluginConfiguration(PluginId).then(load),
+      request('mdiscover/playlists/users', { type: 'GET' }).then(users => {
+        page.querySelector('#PlaylistUser').innerHTML = users.map(user =>
+          `<option value="${user.id}">${user.name.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)}</option>`).join('');
+      })
+    ]).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
   });
 
   page.querySelector('#MusicDiscoveryConfigForm').addEventListener('submit', function (e) {
@@ -176,6 +230,29 @@
       return ApiClient.updatePluginConfiguration(PluginId, cfg);
     }).then(Dashboard.processPluginConfigurationUpdateResult).finally(Dashboard.hideLoadingMsg);
     return false;
+  });
+
+  page.querySelector('#PreviewPlaylist').addEventListener('click', function () {
+    try {
+      Dashboard.showLoadingMsg();
+      request('mdiscover/playlists/preview', { type: 'POST', data: playlistForm(false), contentType: false, processData: false })
+        .then(showImportResult).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
+    } catch (error) { Dashboard.hideLoadingMsg(); showImportResult(error.message); }
+  });
+
+  page.querySelector('#PlaylistImportForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    try {
+      Dashboard.showLoadingMsg();
+      request('mdiscover/playlists/import', { type: 'POST', data: playlistForm(true), contentType: false, processData: false })
+        .then(showImportResult).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
+    } catch (error) { Dashboard.hideLoadingMsg(); showImportResult(error.message); }
+  });
+
+  page.querySelector('#ReconcilePlaylists').addEventListener('click', function () {
+    Dashboard.showLoadingMsg();
+    request('mdiscover/playlists/reconcile', { type: 'POST' })
+      .then(showImportResult).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
   });
 })();
 </script>

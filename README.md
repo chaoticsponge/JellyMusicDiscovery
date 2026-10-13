@@ -149,6 +149,20 @@ proper instead of a discovery hit.
   move/rename + Jellyfin rescan trigger. Significantly more setup
   than the other features — see "Install order" below.
 
+### 7. Import playlists and request missing albums
+Administrators can upload Apple Music text exports, Spotify CSV files,
+M3U, or M3U8 files from **Dashboard → Plugins → Music Discovery**.
+The importer previews exact matches, creates or updates a private native
+Jellyfin playlist for the selected user, and can request each missing
+album through Lidarr. It never guesses when multiple library tracks
+match.
+
+Imports are saved without credentials and reconciled every 15 minutes.
+After Lidarr, Soularr, and slskd add an album and Jellyfin scans it, the
+new tracks are inserted into the playlist in the source order. Reimporting
+the same playlist name updates it instead of creating duplicates. Album
+requests are limited to 50 per import.
+
   **I look forward to the open-source evolution of this project and the wonderful future contributions from the community**
 ---
 
