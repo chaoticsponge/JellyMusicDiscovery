@@ -308,6 +308,7 @@
       if (imported) {
         lines.push('Album requests: ' + requests.filter(item => item.success).length +
           ' succeeded, ' + requests.filter(item => !item.success).length + ' failed');
+        lines.push('Albums still queued: ' + (result.pendingAlbums ?? 0));
       }
 
       const missing = preview.missing || [];

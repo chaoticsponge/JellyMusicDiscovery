@@ -11,7 +11,7 @@ public sealed class PlaylistReconcileTask : IScheduledTask
 
     public string Name => "Music Discovery: reconcile imported playlists";
     public string Key => "MusicDiscoveryPlaylistReconcile";
-    public string Description => "Adds newly downloaded library tracks to previously imported playlists.";
+    public string Description => "Queues missing albums and adds newly downloaded tracks to imported playlists.";
     public string Category => "Music Discovery";
 
     public async Task ExecuteAsync(IProgress<double> progress, CancellationToken ct)

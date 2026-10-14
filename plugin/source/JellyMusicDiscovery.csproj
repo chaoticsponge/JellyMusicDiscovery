@@ -8,9 +8,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <Version>0.1.0.6</Version>
-    <AssemblyVersion>0.1.0.6</AssemblyVersion>
-    <FileVersion>0.1.0.6</FileVersion>
+    <Version>0.1.0.7</Version>
+    <AssemblyVersion>0.1.0.7</AssemblyVersion>
+    <FileVersion>0.1.0.7</FileVersion>
     <!-- Privacy: don't bake the host's absolute build path into the
          compiled DLL. By default .NET emits a PDB-reference path like
          "/Users/<you>/.../obj/Release/net9.0/JellyMusicDiscovery.pdb"

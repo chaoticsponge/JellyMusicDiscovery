@@ -14,7 +14,9 @@ namespace JellyMusicDiscovery.Services;
 
 public sealed class PlaylistImportService
 {
-    private const int MaxAlbumsPerImport = 50;
+    private const int MaxAlbumsPerRun = 10;
+    private const int InitialAlbumsPerImport = 3;
+    private const int MaxAlbumAttempts = 3;
     private readonly ILibraryManager _library;
     private readonly IPlaylistManager _playlists;
     private readonly IUserManager _users;
@@ -62,8 +64,14 @@ public sealed class PlaylistImportService
         await _importGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            return await ApplyAsync(new ImportJob { UserId = userId, PlaylistName = name, Tracks = tracks },
-                requestMissingAlbums, saveJob: true, ct).ConfigureAwait(false);
+            return await ApplyAsync(new ImportJob
+            {
+                UserId = userId,
+                PlaylistName = name,
+                Tracks = tracks,
+                RequestMissingAlbums = requestMissingAlbums,
+            },
+                requestMissingAlbums, saveJob: true, InitialAlbumsPerImport, ct).ConfigureAwait(false);
         }
         finally { _importGate.Release(); }
     }
@@ -75,14 +83,23 @@ public sealed class PlaylistImportService
         {
             var jobs = await LoadJobsAsync(ct).ConfigureAwait(false);
             var results = new List<ImportResult>();
+            var active = new List<ImportJob>();
+            var albumBudget = MaxAlbumsPerRun;
             foreach (var job in jobs)
-                results.Add(await ApplyAsync(job, requestMissingAlbums: false, saveJob: false, ct).ConfigureAwait(false));
+            {
+                var result = await ApplyAsync(job, job.RequestMissingAlbums, saveJob: false, albumBudget, ct).ConfigureAwait(false);
+                albumBudget -= result.AlbumRequests.Count;
+                results.Add(result);
+                if (result.Preview.Matched < result.Preview.Total) active.Add(job);
+            }
+            await SaveJobsAsync(active, ct).ConfigureAwait(false);
             return results;
         }
         finally { _importGate.Release(); }
     }
 
-    private async Task<ImportResult> ApplyAsync(ImportJob job, bool requestMissingAlbums, bool saveJob, CancellationToken ct)
+    private async Task<ImportResult> ApplyAsync(ImportJob job, bool requestMissingAlbums, bool saveJob,
+        int albumRequestLimit, CancellationToken ct)
     {
         var matches = Match(job.Tracks);
         var ids = matches.Where(m => m.Item is not null).Select(m => m.Item!.Id).Distinct().ToArray();
@@ -118,26 +135,37 @@ public sealed class PlaylistImportService
         }
 
         var albumResults = new List<AlbumRequest>();
-        if (requestMissingAlbums)
+        if (requestMissingAlbums && albumRequestLimit > 0)
         {
             var albums = matches.Where(m => m.Item is null && !m.Ambiguous)
                 .Select(m => m.Source)
                 .Where(t => !string.IsNullOrWhiteSpace(t.Artist) && !string.IsNullOrWhiteSpace(t.Album))
                 .DistinctBy(t => $"{Normalize(t.Artist)}|{Normalize(t.Album)}")
-                .Take(MaxAlbumsPerImport)
+                .Where(t => !job.RequestedAlbums.Contains(AlbumKey(t))
+                    && job.AlbumAttempts.GetValueOrDefault(AlbumKey(t)) < MaxAlbumAttempts)
+                .Take(albumRequestLimit)
                 .ToArray();
             foreach (var album in albums)
             {
                 var result = await _lidarr.AddAlbumByTextAsync(album.Artist!, album.Album!, ct).ConfigureAwait(false);
                 albumResults.Add(new AlbumRequest(album.Artist!, album.Album!, result.Success, result.Message));
+                var key = AlbumKey(album);
+                job.AlbumAttempts[key] = job.AlbumAttempts.GetValueOrDefault(key) + 1;
+                if (result.Success) job.RequestedAlbums.Add(key);
             }
         }
 
-        if (saveJob) await SaveJobAsync(job, ct).ConfigureAwait(false);
         var preview = Summarize(job.PlaylistName, job.Tracks, matches);
+        if (saveJob) await SaveJobAsync(job, preview.Matched < preview.Total, ct).ConfigureAwait(false);
+        var pendingAlbums = preview.MissingAlbums.Count(album =>
+        {
+            var key = AlbumKey(album.Artist, album.Album);
+            return !job.RequestedAlbums.Contains(key)
+                && job.AlbumAttempts.GetValueOrDefault(key) < MaxAlbumAttempts;
+        });
         _log.LogInformation("Imported playlist {Playlist}: {Matched}/{Total} matched, {Albums} albums requested",
             job.PlaylistName, preview.Matched, preview.Total, albumResults.Count);
-        return new ImportResult(playlistId, preview, albumResults);
+        return new ImportResult(playlistId, preview, albumResults, pendingAlbums);
     }
 
     private List<TrackMatch> Match(IReadOnlyList<ImportTrack> source)
@@ -261,7 +289,7 @@ public sealed class PlaylistImportService
         return await JsonSerializer.DeserializeAsync<List<ImportJob>>(input, _json, ct).ConfigureAwait(false) ?? [];
     }
 
-    private async Task SaveJobAsync(ImportJob job, CancellationToken ct)
+    private async Task SaveJobAsync(ImportJob job, bool keep, CancellationToken ct)
     {
         if (_jobsFile is null) return;
         await _jobsGate.WaitAsync(ct).ConfigureAwait(false);
@@ -269,12 +297,27 @@ public sealed class PlaylistImportService
         {
             var jobs = await LoadJobsAsync(ct).ConfigureAwait(false);
             jobs.RemoveAll(j => j.UserId == job.UserId && string.Equals(j.PlaylistName, job.PlaylistName, StringComparison.OrdinalIgnoreCase));
-            jobs.Add(job);
-            var temp = _jobsFile + ".tmp";
-            await using (var output = File.Create(temp)) await JsonSerializer.SerializeAsync(output, jobs, _json, ct).ConfigureAwait(false);
-            File.Move(temp, _jobsFile, true);
+            if (keep) jobs.Add(job);
+            await WriteJobsAsync(jobs, ct).ConfigureAwait(false);
         }
         finally { _jobsGate.Release(); }
+    }
+
+    private async Task SaveJobsAsync(List<ImportJob> jobs, CancellationToken ct)
+    {
+        if (_jobsFile is null) return;
+        await _jobsGate.WaitAsync(ct).ConfigureAwait(false);
+        try { await WriteJobsAsync(jobs, ct).ConfigureAwait(false); }
+        finally { _jobsGate.Release(); }
+    }
+
+    private async Task WriteJobsAsync(List<ImportJob> jobs, CancellationToken ct)
+    {
+        var jobsFile = _jobsFile!;
+        var temp = jobsFile + ".tmp";
+        await using (var output = File.Create(temp))
+            await JsonSerializer.SerializeAsync(output, jobs, _json, ct).ConfigureAwait(false);
+        File.Move(temp, jobsFile, true);
     }
 
     private static string CleanPlaylistName(string name)
@@ -291,12 +334,24 @@ public sealed class PlaylistImportService
     private static string Normalize(string? value) => new((value ?? string.Empty).Normalize(NormalizationForm.FormKC)
         .Where(char.IsLetterOrDigit).Select(char.ToUpperInvariant).ToArray());
 
-    public sealed class ImportJob { public Guid UserId { get; set; } public string PlaylistName { get; set; } = ""; public List<ImportTrack> Tracks { get; set; } = []; }
+    private static string AlbumKey(ImportTrack track) => AlbumKey(track.Artist!, track.Album!);
+    private static string AlbumKey(string artist, string album) => $"{Normalize(artist)}|{Normalize(album)}";
+
+    public sealed class ImportJob
+    {
+        public Guid UserId { get; set; }
+        public string PlaylistName { get; set; } = "";
+        public List<ImportTrack> Tracks { get; set; } = [];
+        public bool RequestMissingAlbums { get; set; }
+        public HashSet<string> RequestedAlbums { get; set; } = [];
+        public Dictionary<string, int> AlbumAttempts { get; set; } = [];
+    }
     public sealed record ImportTrack(string? Title, string? Artist, string? Album, string? Path);
     private sealed record TrackMatch(ImportTrack Source, Audio? Item, bool Ambiguous);
     public sealed record MissingTrack(string? Title, string? Artist, string? Album, bool Ambiguous);
     public sealed record MissingAlbum(string Artist, string Album);
     public sealed record ImportPreview(string PlaylistName, int Total, int Matched, IReadOnlyList<MissingTrack> Missing, IReadOnlyList<MissingAlbum> MissingAlbums);
     public sealed record AlbumRequest(string Artist, string Album, bool Success, string Message);
-    public sealed record ImportResult(Guid PlaylistId, ImportPreview Preview, IReadOnlyList<AlbumRequest> AlbumRequests);
+    public sealed record ImportResult(Guid PlaylistId, ImportPreview Preview,
+        IReadOnlyList<AlbumRequest> AlbumRequests, int PendingAlbums);
 }
