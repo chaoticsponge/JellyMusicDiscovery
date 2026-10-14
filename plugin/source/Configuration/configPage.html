@@ -195,8 +195,18 @@
     return cfg;
   }
 
-  function request(path, options) {
-    return ApiClient.ajax(Object.assign({ url: ApiClient.getUrl(path), dataType: 'json' }, options));
+  async function request(path, options) {
+    const response = await ApiClient.ajax(Object.assign({ url: ApiClient.getUrl(path) }, options));
+    if (!response || typeof response.text !== 'function') return response;
+
+    const text = await response.text();
+    let body = text;
+    try { body = text ? JSON.parse(text) : null; } catch (_) { }
+    if (!response.ok) {
+      const detail = body && (body.detail || body.title) || text || response.statusText;
+      throw new Error('HTTP ' + response.status + ': ' + detail);
+    }
+    return body;
   }
 
   function showImportResult(value) {
@@ -240,7 +250,7 @@
 
   function updateProgress(index, percent, state) {
     page.querySelector('#PlaylistProgressBar' + index).value = percent;
-    page.querySelector('#PlaylistProgressState' + index).textContent = `${state} · ${percent}%`;
+    page.querySelector('#PlaylistProgressState' + index).textContent = state + ' · ' + percent + '%';
   }
 
   function runPlaylistAction(message, action) {
@@ -266,6 +276,33 @@
     return data;
   }
 
+  function formatBatchResults(results, imported) {
+    return results.map(entry => {
+      if (entry.error) return entry.file + '\nFailed: ' + entry.error;
+      const result = entry.result || {};
+      const preview = result.preview || result;
+      const lines = [entry.file];
+      lines.push((imported ? 'Imported' : 'Preview') + ': ' +
+        (preview.matched ?? 0) + ' / ' + (preview.total ?? 0) + ' tracks matched');
+
+      const requests = result.albumRequests || [];
+      if (imported) {
+        lines.push('Album requests: ' + requests.filter(item => item.success).length +
+          ' succeeded, ' + requests.filter(item => !item.success).length + ' failed');
+      }
+
+      const missing = preview.missing || [];
+      lines.push('Missing tracks: ' + missing.length);
+      missing.forEach(track => lines.push('  - ' +
+        [track.artist, track.title, track.album].filter(Boolean).join(' — ') +
+        (track.ambiguous ? ' (ambiguous match)' : '')));
+
+      requests.filter(item => !item.success).forEach(item => lines.push(
+        '  Album request failed: ' + item.artist + ' — ' + item.album + ': ' + item.message));
+      return lines.join('\n');
+    }).join('\n\n');
+  }
+
   async function runPlaylistBatch(includeSettings) {
     if (playlistBusy) return;
     const files = Array.from(page.querySelector('#PlaylistFile').files);
@@ -277,17 +314,19 @@
     }
 
     renderProgressRows(files);
-    setPlaylistBusy(true, `${includeSettings ? 'Importing' : 'Previewing'} 0 of ${files.length} playlists`);
+    setPlaylistBusy(true, (includeSettings ? 'Importing' : 'Previewing') +
+      ' 0 of ' + files.length + ' playlists');
     showImportResult('');
     const results = [];
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
       page.querySelector('#PlaylistImportStatus').textContent =
-        `${includeSettings ? 'Importing' : 'Previewing'} ${index + 1} of ${files.length}: ${file.name}`;
+        (includeSettings ? 'Importing' : 'Previewing') + ' ' + (index + 1) +
+        ' of ' + files.length + ': ' + file.name;
       updateProgress(index, 10, 'Uploading');
       const processingTimer = setTimeout(() => updateProgress(index, 25, 'Processing'), 500);
       try {
-        const result = await request(`mdiscover/playlists/${includeSettings ? 'import' : 'preview'}`, {
+        const result = await request('mdiscover/playlists/' + (includeSettings ? 'import' : 'preview'), {
           type: 'POST',
           data: playlistForm(file, includeSettings, customName),
           contentType: false,
@@ -302,8 +341,8 @@
         results.push({ file: file.name, error: error.message || String(error) });
       }
     }
-    showImportResult(results);
-    setPlaylistBusy(false, `Finished ${files.length} playlist${files.length === 1 ? '' : 's'}`);
+    showImportResult(formatBatchResults(results, includeSettings));
+    setPlaylistBusy(false, 'Finished ' + files.length + ' playlist' + (files.length === 1 ? '' : 's'));
   }
 
   page.addEventListener('pageshow', function () {
