@@ -56,6 +56,7 @@ public sealed class PlaylistImportController : ControllerBase
 
     private async Task<bool> IsAdminAsync()
     {
+        if (User.IsInRole("Administrator")) return true;
         var auth = await _authorization.GetAuthorizationInfo(Request).ConfigureAwait(false);
         return auth?.User?.HasPermission(PermissionKind.IsAdministrator) == true;
     }
