@@ -217,6 +217,17 @@
     }
   }
 
+  async function upload(path, form) {
+    const headers = {};
+    ApiClient.setRequestHeaders(headers);
+    return decodeResponse(await fetch(ApiClient.getUrl(path), {
+      method: 'POST',
+      headers: headers,
+      body: form,
+      credentials: 'same-origin'
+    }));
+  }
+
   function showImportResult(value) {
     page.querySelector('#PlaylistImportResult').textContent = typeof value === 'string'
       ? value : JSON.stringify(value, null, 2);
@@ -335,13 +346,8 @@
       const processingTimer = setTimeout(() => updateProgress(index, 25, 'Processing'), 500);
       try {
         const form = playlistForm(file, includeSettings, customName);
-        const result = await request('mdiscover/playlists/' + (includeSettings ? 'import' : 'preview'), {
-          type: 'POST',
-          data: form,
-          body: form,
-          contentType: false,
-          processData: false
-        });
+        const result = await upload(
+          'mdiscover/playlists/' + (includeSettings ? 'import' : 'preview'), form);
         clearTimeout(processingTimer);
         updateProgress(index, 100, 'Complete');
         results.push({ file: file.name, result });
