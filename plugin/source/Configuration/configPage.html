@@ -126,7 +126,7 @@
       <form id="PlaylistImportForm">
         <div class="inputContainer">
           <label class="inputLabel" for="PlaylistFile">Apple Music text, Spotify CSV, M3U or M3U8</label>
-          <input is="emby-input" type="file" id="PlaylistFile" accept=".txt,.csv,.m3u,.m3u8" required />
+          <input is="emby-input" type="file" id="PlaylistFile" accept=".txt,.csv,.m3u,.m3u8" multiple required />
         </div>
         <div class="selectContainer">
           <label class="selectLabel" for="PlaylistUser">Owner</label>
@@ -135,6 +135,7 @@
         <div class="inputContainer">
           <label class="inputLabel" for="PlaylistName">Playlist name</label>
           <input is="emby-input" type="text" id="PlaylistName" maxlength="120" placeholder="Defaults to the uploaded filename" />
+          <div class="fieldDescription">A custom name can only be used when one file is selected.</div>
         </div>
         <div class="checkboxContainer">
           <label>
@@ -147,8 +148,8 @@
         <button is="emby-button" type="button" id="ReconcilePlaylists" class="raised"><span>Reconcile saved imports</span></button>
       </form>
       <div id="PlaylistImportProgress" hidden aria-live="polite" style="margin-top:1.5em">
-        <progress style="width:100%"></progress>
         <div id="PlaylistImportStatus" class="fieldDescription"></div>
+        <div id="PlaylistProgressRows"></div>
       </div>
       <pre id="PlaylistImportResult" aria-live="polite" style="white-space:pre-wrap"></pre>
     </div>
@@ -209,31 +210,100 @@
       'PreviewPlaylist', 'ImportPlaylist', 'ReconcilePlaylists'].forEach(id => {
         page.querySelector('#' + id).disabled = busy;
       });
-    page.querySelector('#PlaylistImportProgress').hidden = !busy;
-    page.querySelector('#PlaylistImportStatus').textContent = busy ? message : '';
+    if (busy) page.querySelector('#PlaylistImportProgress').hidden = false;
+    page.querySelector('#PlaylistImportStatus').textContent = message;
+  }
+
+  function renderProgressRows(files) {
+    const rows = page.querySelector('#PlaylistProgressRows');
+    rows.replaceChildren(...files.map((file, index) => {
+      const row = document.createElement('div');
+      row.style.marginTop = '1em';
+      const label = document.createElement('div');
+      label.style.display = 'flex';
+      label.style.justifyContent = 'space-between';
+      const name = document.createElement('span');
+      name.textContent = file.name;
+      const state = document.createElement('span');
+      state.id = 'PlaylistProgressState' + index;
+      state.textContent = 'Queued · 0%';
+      const progress = document.createElement('progress');
+      progress.id = 'PlaylistProgressBar' + index;
+      progress.max = 100;
+      progress.value = 0;
+      progress.style.width = '100%';
+      label.append(name, state);
+      row.append(label, progress);
+      return row;
+    }));
+  }
+
+  function updateProgress(index, percent, state) {
+    page.querySelector('#PlaylistProgressBar' + index).value = percent;
+    page.querySelector('#PlaylistProgressState' + index).textContent = `${state} · ${percent}%`;
   }
 
   function runPlaylistAction(message, action) {
     if (playlistBusy) return;
+    renderProgressRows([{ name: message }]);
     setPlaylistBusy(true, message);
     showImportResult('');
+    updateProgress(0, 10, 'Processing');
     Promise.resolve().then(action)
-      .then(showImportResult)
-      .catch(error => showImportResult(error.message || error))
-      .finally(() => setPlaylistBusy(false, ''));
+      .then(result => { updateProgress(0, 100, 'Complete'); showImportResult(result); })
+      .catch(error => { updateProgress(0, 100, 'Failed'); showImportResult(error.message || error); })
+      .finally(() => setPlaylistBusy(false, 'Finished'));
   }
 
-  function playlistForm(includeSettings) {
-    const file = page.querySelector('#PlaylistFile').files[0];
-    if (!file) throw new Error('Choose a playlist file first.');
+  function playlistForm(file, includeSettings, playlistName) {
     const data = new FormData();
     data.append('file', file, file.name);
     if (includeSettings) {
       data.append('userId', page.querySelector('#PlaylistUser').value);
-      data.append('playlistName', page.querySelector('#PlaylistName').value);
+      data.append('playlistName', playlistName);
       data.append('requestMissingAlbums', page.querySelector('#RequestMissingAlbums').checked);
     }
     return data;
+  }
+
+  async function runPlaylistBatch(includeSettings) {
+    if (playlistBusy) return;
+    const files = Array.from(page.querySelector('#PlaylistFile').files);
+    if (!files.length) { showImportResult('Choose at least one playlist file.'); return; }
+    const customName = page.querySelector('#PlaylistName').value.trim();
+    if (files.length > 1 && customName) {
+      showImportResult('Clear the custom playlist name before importing multiple files.');
+      return;
+    }
+
+    renderProgressRows(files);
+    setPlaylistBusy(true, `${includeSettings ? 'Importing' : 'Previewing'} 0 of ${files.length} playlists`);
+    showImportResult('');
+    const results = [];
+    for (let index = 0; index < files.length; index++) {
+      const file = files[index];
+      page.querySelector('#PlaylistImportStatus').textContent =
+        `${includeSettings ? 'Importing' : 'Previewing'} ${index + 1} of ${files.length}: ${file.name}`;
+      updateProgress(index, 10, 'Uploading');
+      const processingTimer = setTimeout(() => updateProgress(index, 25, 'Processing'), 500);
+      try {
+        const result = await request(`mdiscover/playlists/${includeSettings ? 'import' : 'preview'}`, {
+          type: 'POST',
+          data: playlistForm(file, includeSettings, customName),
+          contentType: false,
+          processData: false
+        });
+        clearTimeout(processingTimer);
+        updateProgress(index, 100, 'Complete');
+        results.push({ file: file.name, result });
+      } catch (error) {
+        clearTimeout(processingTimer);
+        updateProgress(index, 100, 'Failed');
+        results.push({ file: file.name, error: error.message || String(error) });
+      }
+    }
+    showImportResult(results);
+    setPlaylistBusy(false, `Finished ${files.length} playlist${files.length === 1 ? '' : 's'}`);
   }
 
   page.addEventListener('pageshow', function () {
@@ -263,14 +333,12 @@
   });
 
   page.querySelector('#PreviewPlaylist').addEventListener('click', function () {
-    runPlaylistAction('Reading and matching playlist…', () =>
-      request('mdiscover/playlists/preview', { type: 'POST', data: playlistForm(false), contentType: false, processData: false }));
+    runPlaylistBatch(false);
   });
 
   page.querySelector('#PlaylistImportForm').addEventListener('submit', function (e) {
     e.preventDefault();
-    runPlaylistAction('Importing playlist and requesting missing albums…', () =>
-      request('mdiscover/playlists/import', { type: 'POST', data: playlistForm(true), contentType: false, processData: false }));
+    runPlaylistBatch(true);
   });
 
   page.querySelector('#ReconcilePlaylists').addEventListener('click', function () {
