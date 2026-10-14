@@ -150,7 +150,9 @@ public sealed class PlaylistImportService
                 var result = await _lidarr.AddAlbumByTextAsync(album.Artist!, album.Album!, ct).ConfigureAwait(false);
                 albumResults.Add(new AlbumRequest(album.Artist!, album.Album!, result.Success, result.Message));
                 var key = AlbumKey(album);
-                job.AlbumAttempts[key] = job.AlbumAttempts.GetValueOrDefault(key) + 1;
+                job.AlbumAttempts[key] = result.Retryable
+                    ? job.AlbumAttempts.GetValueOrDefault(key) + 1
+                    : MaxAlbumAttempts;
                 if (result.Success) job.RequestedAlbums.Add(key);
             }
         }
@@ -175,7 +177,9 @@ public sealed class PlaylistImportService
             Recursive = true,
             IncludeItemTypes = [BaseItemKind.Audio],
             IsVirtualItem = false,
-        }).OfType<Audio>().ToArray();
+        }).OfType<Audio>()
+            .Where(item => !string.IsNullOrWhiteSpace(item.Path))
+            .ToArray();
 
         var byMetadata = audio.GroupBy(a => Key(a.Name, a.Artists.FirstOrDefault(), a.Album))
             .ToDictionary(g => g.Key, g => g.ToArray());
