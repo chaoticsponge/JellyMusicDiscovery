@@ -152,6 +152,15 @@
         <div id="PlaylistProgressRows"></div>
       </div>
       <div id="PlaylistImportResult" aria-live="polite" style="margin-top:1.5em"></div>
+      <div id="PlaylistReportActions" hidden style="margin-top:1em">
+        <button is="emby-button" type="button" id="CopyPlaylistReport" class="raised">
+          <span>Copy report</span>
+        </button>
+        <button is="emby-button" type="button" id="DownloadPlaylistReport" class="raised">
+          <span>Download report</span>
+        </button>
+        <span id="PlaylistReportStatus" class="fieldDescription" aria-live="polite"></span>
+      </div>
     </div>
   </div>
 
@@ -171,6 +180,7 @@
 
   const page = document.querySelector('#MusicDiscoveryConfigPage');
   let playlistBusy = false;
+  let shareableReport = '';
 
   function load(cfg) {
     fields.forEach(f => {
@@ -231,6 +241,13 @@
   function showImportResult(value) {
     page.querySelector('#PlaylistImportResult').textContent = typeof value === 'string'
       ? value : JSON.stringify(value, null, 2);
+    setShareableReport('');
+  }
+
+  function setShareableReport(report) {
+    shareableReport = report;
+    page.querySelector('#PlaylistReportActions').hidden = !report;
+    page.querySelector('#PlaylistReportStatus').textContent = '';
   }
 
   function setPlaylistBusy(busy, message) {
@@ -308,6 +325,12 @@
       .filter(Boolean).join(' — ');
   }
 
+  function reportTrackLabel(track) {
+    return (track.artist ?? track.Artist ?? 'Unknown artist') + ' - ' +
+      (track.title ?? track.Title ?? 'Unknown title') + ' | Album: ' +
+      (track.album ?? track.Album ?? 'Unknown album');
+  }
+
   function addTrackDetails(parent, label, tracks, open) {
     const details = document.createElement('details');
     details.style.marginTop = '0.75em';
@@ -329,6 +352,7 @@
 
   function renderBatchResults(results, imported) {
     const container = page.querySelector('#PlaylistImportResult');
+    const reportSections = [];
     const sections = results.map(entry => {
       const section = document.createElement('section');
       section.style.padding = '1em 0';
@@ -362,12 +386,22 @@
         section.append(requestStatus);
         addTrackDetails(section, 'Queued for download — will be added to playlist', queued, false);
         addTrackDetails(section, 'Not found — manual action required', manual, manual.length > 0);
+        if (manual.length) {
+          reportSections.push('PLAYLIST: ' + entry.file + '\n' + manual.map(track =>
+            '- ' + reportTrackLabel(track) + ' | Reason: ' +
+            ((track.ambiguous ?? track.Ambiguous)
+              ? 'multiple local matches'
+              : 'no automatic album match')).join('\n'));
+        }
       } else {
         addTrackDetails(section, 'Not currently available', preview.missing || preview.Missing || [], false);
       }
       return section;
     });
     container.replaceChildren(...sections);
+    setShareableReport(reportSections.length
+      ? 'Tracks requiring manual action\n\n' + reportSections.join('\n\n') + '\n'
+      : '');
   }
 
   async function runPlaylistBatch(includeSettings) {
@@ -447,6 +481,37 @@
   page.querySelector('#ReconcilePlaylists').addEventListener('click', function () {
     runPlaylistAction('Reconciling saved playlists...', () =>
       request('mdiscover/playlists/reconcile', { type: 'POST' }));
+  });
+
+  page.querySelector('#CopyPlaylistReport').addEventListener('click', async function () {
+    if (!shareableReport) return;
+    const status = page.querySelector('#PlaylistReportStatus');
+    try {
+      await navigator.clipboard.writeText(shareableReport);
+      status.textContent = 'Copied';
+    } catch (_) {
+      const area = document.createElement('textarea');
+      area.value = shareableReport;
+      area.style.position = 'fixed';
+      area.style.opacity = '0';
+      document.body.append(area);
+      area.select();
+      status.textContent = document.execCommand('copy') ? 'Copied' : 'Copy failed';
+      area.remove();
+    }
+  });
+
+  page.querySelector('#DownloadPlaylistReport').addEventListener('click', function () {
+    if (!shareableReport) return;
+    const url = URL.createObjectURL(new Blob([shareableReport], { type: 'text/plain;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'playlist-tracks-requiring-manual-action.txt';
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    page.querySelector('#PlaylistReportStatus').textContent = 'Downloaded';
   });
 })();
 </script>
