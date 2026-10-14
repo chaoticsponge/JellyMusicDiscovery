@@ -215,9 +215,14 @@
     Dashboard.showLoadingMsg();
     Promise.all([
       ApiClient.getPluginConfiguration(PluginId).then(load),
-      request('mdiscover/playlists/users', { type: 'GET' }).then(users => {
-        page.querySelector('#PlaylistUser').innerHTML = users.map(user =>
-          `<option value="${user.id}">${user.name.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`)}</option>`).join('');
+      ApiClient.getUsers().then(users => {
+        const select = page.querySelector('#PlaylistUser');
+        select.replaceChildren(...users.map(user => {
+          const option = document.createElement('option');
+          option.value = user.Id;
+          option.textContent = user.Name;
+          return option;
+        }));
       })
     ]).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
   });
