@@ -195,10 +195,8 @@
     return cfg;
   }
 
-  async function request(path, options) {
-    const response = await ApiClient.ajax(Object.assign({ url: ApiClient.getUrl(path) }, options));
+  async function decodeResponse(response) {
     if (!response || typeof response.text !== 'function') return response;
-
     const text = await response.text();
     let body = text;
     try { body = text ? JSON.parse(text) : null; } catch (_) { }
@@ -207,6 +205,16 @@
       throw new Error('HTTP ' + response.status + ': ' + detail);
     }
     return body;
+  }
+
+  async function request(path, options) {
+    try {
+      return await decodeResponse(await ApiClient.ajax(
+        Object.assign({ url: ApiClient.getUrl(path) }, options)));
+    } catch (error) {
+      if (error && typeof error.text === 'function') return decodeResponse(error);
+      throw error;
+    }
   }
 
   function showImportResult(value) {
@@ -326,9 +334,11 @@
       updateProgress(index, 10, 'Uploading');
       const processingTimer = setTimeout(() => updateProgress(index, 25, 'Processing'), 500);
       try {
+        const form = playlistForm(file, includeSettings, customName);
         const result = await request('mdiscover/playlists/' + (includeSettings ? 'import' : 'preview'), {
           type: 'POST',
-          data: playlistForm(file, includeSettings, customName),
+          data: form,
+          body: form,
           contentType: false,
           processData: false
         });
