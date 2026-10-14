@@ -279,7 +279,15 @@
     showImportResult('');
     updateProgress(0, 10, 'Processing');
     Promise.resolve().then(action)
-      .then(result => { updateProgress(0, 100, 'Complete'); showImportResult(result); })
+      .then(result => {
+        updateProgress(0, 100, 'Complete');
+        if (Array.isArray(result)) {
+          renderBatchResults(result.map(item => {
+            const preview = item.preview || item.Preview || {};
+            return { file: preview.playlistName || preview.PlaylistName || 'Imported playlist', result: item };
+          }), true);
+        } else showImportResult(result);
+      })
       .catch(error => { updateProgress(0, 100, 'Failed'); showImportResult(error.message || error); })
       .finally(() => setPlaylistBusy(false, 'Finished'));
   }
@@ -437,7 +445,7 @@
   });
 
   page.querySelector('#ReconcilePlaylists').addEventListener('click', function () {
-    runPlaylistAction('Reconciling saved playlists…', () =>
+    runPlaylistAction('Reconciling saved playlists...', () =>
       request('mdiscover/playlists/reconcile', { type: 'POST' }));
   });
 })();
