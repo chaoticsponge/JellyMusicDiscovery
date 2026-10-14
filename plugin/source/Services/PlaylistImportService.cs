@@ -148,7 +148,8 @@ public sealed class PlaylistImportService
             foreach (var album in albums)
             {
                 var result = await _lidarr.AddAlbumByTextAsync(album.Artist!, album.Album!, ct).ConfigureAwait(false);
-                albumResults.Add(new AlbumRequest(album.Artist!, album.Album!, result.Success, result.Message));
+                albumResults.Add(new AlbumRequest(album.Artist!, album.Album!, result.Success,
+                    result.Retryable, result.Message));
                 var key = AlbumKey(album);
                 job.AlbumAttempts[key] = result.Retryable
                     ? job.AlbumAttempts.GetValueOrDefault(key) + 1
@@ -165,9 +166,18 @@ public sealed class PlaylistImportService
             return !job.RequestedAlbums.Contains(key)
                 && job.AlbumAttempts.GetValueOrDefault(key) < MaxAlbumAttempts;
         });
+        var unmatched = matches.Where(match => match.Item is null).ToArray();
+        bool RequiresManualAction(TrackMatch match) => !requestMissingAlbums
+            || match.Ambiguous
+            || string.IsNullOrWhiteSpace(match.Source.Artist)
+            || string.IsNullOrWhiteSpace(match.Source.Album)
+            || (!job.RequestedAlbums.Contains(AlbumKey(match.Source))
+                && job.AlbumAttempts.GetValueOrDefault(AlbumKey(match.Source)) >= MaxAlbumAttempts);
+        var manual = unmatched.Where(RequiresManualAction).Select(ToMissingTrack).ToArray();
+        var queued = unmatched.Where(match => !RequiresManualAction(match)).Select(ToMissingTrack).ToArray();
         _log.LogInformation("Imported playlist {Playlist}: {Matched}/{Total} matched, {Albums} albums requested",
             job.PlaylistName, preview.Matched, preview.Total, albumResults.Count);
-        return new ImportResult(playlistId, preview, albumResults, pendingAlbums);
+        return new ImportResult(playlistId, preview, albumResults, pendingAlbums, queued, manual);
     }
 
     private List<TrackMatch> Match(IReadOnlyList<ImportTrack> source)
@@ -203,13 +213,16 @@ public sealed class PlaylistImportService
 
     private static ImportPreview Summarize(string name, IReadOnlyList<ImportTrack> tracks, IReadOnlyList<TrackMatch> matches)
     {
-        var missing = matches.Where(m => m.Item is null).Select(m => new MissingTrack(
-            m.Source.Title ?? Path.GetFileNameWithoutExtension(m.Source.Path), m.Source.Artist, m.Source.Album, m.Ambiguous)).ToArray();
+        var missing = matches.Where(m => m.Item is null).Select(ToMissingTrack).ToArray();
         var albums = matches.Where(m => m.Item is null && !m.Ambiguous && !string.IsNullOrWhiteSpace(m.Source.Artist) && !string.IsNullOrWhiteSpace(m.Source.Album))
             .Select(m => new MissingAlbum(m.Source.Artist!, m.Source.Album!))
             .DistinctBy(a => $"{Normalize(a.Artist)}|{Normalize(a.Album)}").ToArray();
         return new ImportPreview(name, tracks.Count, matches.Count(m => m.Item is not null), missing, albums);
     }
+
+    private static MissingTrack ToMissingTrack(TrackMatch match) => new(
+        match.Source.Title ?? Path.GetFileNameWithoutExtension(match.Source.Path),
+        match.Source.Artist, match.Source.Album, match.Ambiguous);
 
     private static List<ImportTrack> Parse(string fileName, byte[] data)
     {
@@ -356,7 +369,8 @@ public sealed class PlaylistImportService
     public sealed record MissingTrack(string? Title, string? Artist, string? Album, bool Ambiguous);
     public sealed record MissingAlbum(string Artist, string Album);
     public sealed record ImportPreview(string PlaylistName, int Total, int Matched, IReadOnlyList<MissingTrack> Missing, IReadOnlyList<MissingAlbum> MissingAlbums);
-    public sealed record AlbumRequest(string Artist, string Album, bool Success, string Message);
+    public sealed record AlbumRequest(string Artist, string Album, bool Success, bool Retryable, string Message);
     public sealed record ImportResult(Guid PlaylistId, ImportPreview Preview,
-        IReadOnlyList<AlbumRequest> AlbumRequests, int PendingAlbums);
+        IReadOnlyList<AlbumRequest> AlbumRequests, int PendingAlbums,
+        IReadOnlyList<MissingTrack> QueuedTracks, IReadOnlyList<MissingTrack> ManualTracks);
 }
