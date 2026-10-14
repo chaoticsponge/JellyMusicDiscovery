@@ -299,26 +299,29 @@
     return results.map(entry => {
       if (entry.error) return entry.file + '\nFailed: ' + entry.error;
       const result = entry.result || {};
-      const preview = result.preview || result;
+      const preview = result.preview || result.Preview || result;
       const lines = [entry.file];
       lines.push((imported ? 'Imported' : 'Preview') + ': ' +
-        (preview.matched ?? 0) + ' / ' + (preview.total ?? 0) + ' tracks matched');
+        (preview.matched ?? preview.Matched ?? 0) + ' / ' +
+        (preview.total ?? preview.Total ?? 0) + ' tracks matched');
 
-      const requests = result.albumRequests || [];
+      const requests = result.albumRequests || result.AlbumRequests || [];
       if (imported) {
-        lines.push('Album requests: ' + requests.filter(item => item.success).length +
-          ' succeeded, ' + requests.filter(item => !item.success).length + ' failed');
-        lines.push('Albums still queued: ' + (result.pendingAlbums ?? 0));
+        lines.push('Album requests: ' + requests.filter(item => item.success ?? item.Success).length +
+          ' succeeded, ' + requests.filter(item => !(item.success ?? item.Success)).length + ' failed');
+        lines.push('Albums still queued: ' + (result.pendingAlbums ?? result.PendingAlbums ?? 0));
       }
 
-      const missing = preview.missing || [];
+      const missing = preview.missing || preview.Missing || [];
       lines.push('Missing tracks: ' + missing.length);
       missing.forEach(track => lines.push('  - ' +
-        [track.artist, track.title, track.album].filter(Boolean).join(' — ') +
-        (track.ambiguous ? ' (ambiguous match)' : '')));
+        [track.artist ?? track.Artist, track.title ?? track.Title, track.album ?? track.Album]
+          .filter(Boolean).join(' — ') +
+        (track.ambiguous ?? track.Ambiguous ? ' (ambiguous match)' : '')));
 
-      requests.filter(item => !item.success).forEach(item => lines.push(
-        '  Album request failed: ' + item.artist + ' — ' + item.album + ': ' + item.message));
+      requests.filter(item => !(item.success ?? item.Success)).forEach(item => lines.push(
+        '  Album request failed: ' + (item.artist ?? item.Artist) + ' — ' +
+        (item.album ?? item.Album) + ': ' + (item.message ?? item.Message)));
       return lines.join('\n');
     }).join('\n\n');
   }

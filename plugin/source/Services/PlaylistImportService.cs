@@ -187,11 +187,12 @@ public sealed class PlaylistImportService
         return source.Select(track =>
         {
             Audio[] candidates = [];
-            if (!string.IsNullOrWhiteSpace(track.Path)) byPath.TryGetValue(NormalizePath(track.Path), out candidates!);
+            if (!string.IsNullOrWhiteSpace(track.Path))
+                candidates = byPath.GetValueOrDefault(NormalizePath(track.Path)) ?? [];
             if (candidates.Length != 1 && !string.IsNullOrWhiteSpace(track.Title))
-                byMetadata.TryGetValue(Key(track.Title, track.Artist, track.Album), out candidates!);
+                candidates = byMetadata.GetValueOrDefault(Key(track.Title, track.Artist, track.Album)) ?? [];
             if (candidates.Length != 1 && !string.IsNullOrWhiteSpace(track.Title) && !string.IsNullOrWhiteSpace(track.Artist))
-                byTitleArtist.TryGetValue(Key(track.Title, track.Artist, null), out candidates!);
+                candidates = byTitleArtist.GetValueOrDefault(Key(track.Title, track.Artist, null)) ?? [];
             return new TrackMatch(track, candidates.Length == 1 ? candidates[0] : null, candidates.Length > 1);
         }).ToList();
     }
