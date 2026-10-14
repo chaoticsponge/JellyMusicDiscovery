@@ -232,7 +232,7 @@ gotchas (Lidarr `UMASK=000`, the Soularr version-check patch, etc.).
 ### Jellyfin
 - **Server version: 10.11.x.** The plugin's `meta.json` declares
   `targetAbi=10.11.0.0` and the source is built against the
-  `Jellyfin.Common/Controller/Model 10.11.2` packages. It will load on
+  `Jellyfin.Common/Controller/Model 10.11.11` packages. It will load on
   any 10.11.x. **It will NOT load on 10.10 or earlier** — Jellyfin's
   plugin ABI changed. If you need a 10.10 build, you'd have to
   rebuild against the older NuGet packages and adjust the API

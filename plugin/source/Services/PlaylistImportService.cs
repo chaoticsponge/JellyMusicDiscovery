@@ -40,7 +40,7 @@ public sealed class PlaylistImportService
         }
     }
 
-    public IReadOnlyList<object> Users() => _users.Users
+    public IReadOnlyList<object> Users() => _users.GetUsers()
         .OrderBy(u => u.Username)
         .Select(u => (object)new { id = u.Id, name = u.Username })
         .ToArray();

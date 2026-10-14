@@ -34,9 +34,9 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Jellyfin.Common" Version="10.11.2" />
-    <PackageReference Include="Jellyfin.Controller" Version="10.11.2" />
-    <PackageReference Include="Jellyfin.Model" Version="10.11.2" />
+    <PackageReference Include="Jellyfin.Common" Version="10.11.11" />
+    <PackageReference Include="Jellyfin.Controller" Version="10.11.11" />
+    <PackageReference Include="Jellyfin.Model" Version="10.11.11" />
     <!-- Read audio tags (artist/album/track) from completed slskd downloads
          so the post-download organizer can move files to the right
          {Artist}/{Album} folder in the music library. -->
