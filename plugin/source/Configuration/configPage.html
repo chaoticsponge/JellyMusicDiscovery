@@ -143,10 +143,14 @@
           </label>
         </div>
         <button is="emby-button" type="button" id="PreviewPlaylist" class="raised"><span>Preview</span></button>
-        <button is="emby-button" type="submit" class="raised button-submit"><span>Import</span></button>
+        <button is="emby-button" type="submit" id="ImportPlaylist" class="raised button-submit"><span>Import</span></button>
         <button is="emby-button" type="button" id="ReconcilePlaylists" class="raised"><span>Reconcile saved imports</span></button>
       </form>
-      <pre id="PlaylistImportResult" style="white-space:pre-wrap"></pre>
+      <div id="PlaylistImportProgress" hidden aria-live="polite" style="margin-top:1.5em">
+        <progress style="width:100%"></progress>
+        <div id="PlaylistImportStatus" class="fieldDescription"></div>
+      </div>
+      <pre id="PlaylistImportResult" aria-live="polite" style="white-space:pre-wrap"></pre>
     </div>
   </div>
 
@@ -165,6 +169,7 @@
   ];
 
   const page = document.querySelector('#MusicDiscoveryConfigPage');
+  let playlistBusy = false;
 
   function load(cfg) {
     fields.forEach(f => {
@@ -196,6 +201,26 @@
   function showImportResult(value) {
     page.querySelector('#PlaylistImportResult').textContent = typeof value === 'string'
       ? value : JSON.stringify(value, null, 2);
+  }
+
+  function setPlaylistBusy(busy, message) {
+    playlistBusy = busy;
+    ['PlaylistFile', 'PlaylistUser', 'PlaylistName', 'RequestMissingAlbums',
+      'PreviewPlaylist', 'ImportPlaylist', 'ReconcilePlaylists'].forEach(id => {
+        page.querySelector('#' + id).disabled = busy;
+      });
+    page.querySelector('#PlaylistImportProgress').hidden = !busy;
+    page.querySelector('#PlaylistImportStatus').textContent = busy ? message : '';
+  }
+
+  function runPlaylistAction(message, action) {
+    if (playlistBusy) return;
+    setPlaylistBusy(true, message);
+    showImportResult('');
+    Promise.resolve().then(action)
+      .then(showImportResult)
+      .catch(error => showImportResult(error.message || error))
+      .finally(() => setPlaylistBusy(false, ''));
   }
 
   function playlistForm(includeSettings) {
@@ -238,26 +263,19 @@
   });
 
   page.querySelector('#PreviewPlaylist').addEventListener('click', function () {
-    try {
-      Dashboard.showLoadingMsg();
-      request('mdiscover/playlists/preview', { type: 'POST', data: playlistForm(false), contentType: false, processData: false })
-        .then(showImportResult).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
-    } catch (error) { Dashboard.hideLoadingMsg(); showImportResult(error.message); }
+    runPlaylistAction('Reading and matching playlist…', () =>
+      request('mdiscover/playlists/preview', { type: 'POST', data: playlistForm(false), contentType: false, processData: false }));
   });
 
   page.querySelector('#PlaylistImportForm').addEventListener('submit', function (e) {
     e.preventDefault();
-    try {
-      Dashboard.showLoadingMsg();
-      request('mdiscover/playlists/import', { type: 'POST', data: playlistForm(true), contentType: false, processData: false })
-        .then(showImportResult).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
-    } catch (error) { Dashboard.hideLoadingMsg(); showImportResult(error.message); }
+    runPlaylistAction('Importing playlist and requesting missing albums…', () =>
+      request('mdiscover/playlists/import', { type: 'POST', data: playlistForm(true), contentType: false, processData: false }));
   });
 
   page.querySelector('#ReconcilePlaylists').addEventListener('click', function () {
-    Dashboard.showLoadingMsg();
-    request('mdiscover/playlists/reconcile', { type: 'POST' })
-      .then(showImportResult).catch(error => showImportResult(error.message || error)).finally(Dashboard.hideLoadingMsg);
+    runPlaylistAction('Reconciling saved playlists…', () =>
+      request('mdiscover/playlists/reconcile', { type: 'POST' }));
   });
 })();
 </script>

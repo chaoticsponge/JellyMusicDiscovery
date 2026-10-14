@@ -21,7 +21,8 @@ public sealed class PlaylistImportService
     private readonly LidarrClient _lidarr;
     private readonly ILogger<PlaylistImportService> _log;
     private readonly string? _jobsFile;
-    private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly SemaphoreSlim _importGate = new(1, 1);
+    private readonly SemaphoreSlim _jobsGate = new(1, 1);
     private readonly JsonSerializerOptions _json = new(JsonSerializerDefaults.Web) { WriteIndented = true };
 
     public PlaylistImportService(ILibraryManager library, IPlaylistManager playlists, IUserManager users,
@@ -58,17 +59,27 @@ public sealed class PlaylistImportService
         if (_users.GetUserById(userId) is null) throw new ArgumentException("Unknown Jellyfin user.");
         var tracks = Parse(fileName, data);
         var name = CleanPlaylistName(playlistName ?? Path.GetFileNameWithoutExtension(fileName));
-        return await ApplyAsync(new ImportJob { UserId = userId, PlaylistName = name, Tracks = tracks },
-            requestMissingAlbums, saveJob: true, ct).ConfigureAwait(false);
+        await _importGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await ApplyAsync(new ImportJob { UserId = userId, PlaylistName = name, Tracks = tracks },
+                requestMissingAlbums, saveJob: true, ct).ConfigureAwait(false);
+        }
+        finally { _importGate.Release(); }
     }
 
     public async Task<IReadOnlyList<ImportResult>> ReconcileAsync(CancellationToken ct)
     {
-        var jobs = await LoadJobsAsync(ct).ConfigureAwait(false);
-        var results = new List<ImportResult>();
-        foreach (var job in jobs)
-            results.Add(await ApplyAsync(job, requestMissingAlbums: false, saveJob: false, ct).ConfigureAwait(false));
-        return results;
+        await _importGate.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            var jobs = await LoadJobsAsync(ct).ConfigureAwait(false);
+            var results = new List<ImportResult>();
+            foreach (var job in jobs)
+                results.Add(await ApplyAsync(job, requestMissingAlbums: false, saveJob: false, ct).ConfigureAwait(false));
+            return results;
+        }
+        finally { _importGate.Release(); }
     }
 
     private async Task<ImportResult> ApplyAsync(ImportJob job, bool requestMissingAlbums, bool saveJob, CancellationToken ct)
@@ -253,7 +264,7 @@ public sealed class PlaylistImportService
     private async Task SaveJobAsync(ImportJob job, CancellationToken ct)
     {
         if (_jobsFile is null) return;
-        await _gate.WaitAsync(ct).ConfigureAwait(false);
+        await _jobsGate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
             var jobs = await LoadJobsAsync(ct).ConfigureAwait(false);
@@ -263,7 +274,7 @@ public sealed class PlaylistImportService
             await using (var output = File.Create(temp)) await JsonSerializer.SerializeAsync(output, jobs, _json, ct).ConfigureAwait(false);
             File.Move(temp, _jobsFile, true);
         }
-        finally { _gate.Release(); }
+        finally { _jobsGate.Release(); }
     }
 
     private static string CleanPlaylistName(string name)
