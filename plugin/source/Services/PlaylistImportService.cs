@@ -195,6 +195,10 @@ public sealed class PlaylistImportService
             .ToDictionary(g => g.Key, g => g.ToArray());
         var byTitleArtist = audio.GroupBy(a => Key(a.Name, a.Artists.FirstOrDefault(), null))
             .ToDictionary(g => g.Key, g => g.ToArray());
+        var byTitleAlbum = audio.GroupBy(a => Key(a.Name, null, a.Album))
+            .ToDictionary(g => g.Key, g => g.ToArray());
+        var byTitle = audio.GroupBy(a => Normalize(a.Name))
+            .ToDictionary(g => g.Key, g => g.ToArray());
         var byPath = audio.Where(a => !string.IsNullOrWhiteSpace(a.Path))
             .GroupBy(a => NormalizePath(a.Path)).ToDictionary(g => g.Key, g => g.ToArray());
 
@@ -207,6 +211,10 @@ public sealed class PlaylistImportService
                 candidates = byMetadata.GetValueOrDefault(Key(track.Title, track.Artist, track.Album)) ?? [];
             if (candidates.Length != 1 && !string.IsNullOrWhiteSpace(track.Title) && !string.IsNullOrWhiteSpace(track.Artist))
                 candidates = byTitleArtist.GetValueOrDefault(Key(track.Title, track.Artist, null)) ?? [];
+            if (candidates.Length != 1 && !string.IsNullOrWhiteSpace(track.Title) && !string.IsNullOrWhiteSpace(track.Album))
+                candidates = byTitleAlbum.GetValueOrDefault(Key(track.Title, null, track.Album)) ?? [];
+            if (candidates.Length != 1 && !string.IsNullOrWhiteSpace(track.Title))
+                candidates = byTitle.GetValueOrDefault(Normalize(track.Title)) ?? [];
             return new TrackMatch(track, candidates.Length == 1 ? candidates[0] : null, candidates.Length > 1);
         }).ToList();
     }
